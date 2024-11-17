@@ -1809,6 +1809,8 @@ pub enum KnownInstanceType<'db> {
     Literal,
     /// The symbol `typing.Optional` (which can also be found as `typing_extensions.Literal`)
     Optional,
+
+    Any,
     /// A single instance of `typing.TypeVar`
     TypeVar(TypeVarInstance<'db>),
     // TODO: fill this enum out with more special forms, etc.
@@ -1819,6 +1821,7 @@ impl<'db> KnownInstanceType<'db> {
         match self {
             KnownInstanceType::Literal => "Literal",
             KnownInstanceType::Optional => "Optional",
+            KnownInstanceType::Any => "Any",
             KnownInstanceType::TypeVar(_) => "TypeVar",
         }
     }
@@ -1826,7 +1829,7 @@ impl<'db> KnownInstanceType<'db> {
     /// Evaluate the known instance in boolean context
     pub const fn bool(self) -> Truthiness {
         match self {
-            Self::Literal | Self::Optional => Truthiness::AlwaysTrue,
+            Self::Literal | Self::Optional | Self::Any => Truthiness::AlwaysTrue,
             Self::TypeVar(_) => Truthiness::AlwaysTrue,
         }
     }
@@ -1836,6 +1839,7 @@ impl<'db> KnownInstanceType<'db> {
         match self {
             Self::Literal => "typing.Literal",
             Self::Optional => "typing.Optional",
+            Self::Any => "typing.Any",
             Self::TypeVar(typevar) => typevar.name(db),
         }
     }
@@ -1845,6 +1849,7 @@ impl<'db> KnownInstanceType<'db> {
         match self {
             Self::Literal => KnownClass::SpecialForm,
             Self::Optional => KnownClass::SpecialForm,
+            Self::Any => KnownClass::Object,
             Self::TypeVar(_) => KnownClass::TypeVar,
         }
     }
@@ -1865,6 +1870,7 @@ impl<'db> KnownInstanceType<'db> {
         match (module.name().as_str(), instance_name) {
             ("typing" | "typing_extensions", "Literal") => Some(Self::Literal),
             ("typing" | "typing_extensions", "Optional") => Some(Self::Optional),
+            ("typing" | "typing_extensions", "Any") => Some(Self::Any),
             _ => None,
         }
     }
