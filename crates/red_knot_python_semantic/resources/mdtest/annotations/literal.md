@@ -61,6 +61,24 @@ invalid4: Literal[
 ]
 ```
 
+## Parameterization with None
+
+`Literal[None]` is a valid spelling for None.
+
+```py
+x1: Literal[1, None]
+
+def f():
+    # revealed: Literal[1] | None
+    reveal_type(x1)
+
+x2: Literal[None]
+
+def f2():
+    # revealed: Nne
+    reveal_type(x2)
+```
+
 ## Detecting Literal outside typing and typing_extensions
 
 Only Literal that is defined in typing and typing_extension modules is detected as the special
