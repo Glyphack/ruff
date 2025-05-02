@@ -87,8 +87,8 @@ use crate::types::{
     MemberLookupPolicy, MetaclassCandidate, Parameter, ParameterForm, Parameters, Signature,
     Signatures, SliceLiteralType, StringLiteralType, SubclassOfType, Symbol, SymbolAndQualifiers,
     Truthiness, TupleType, Type, TypeAliasType, TypeAndQualifiers, TypeArrayDisplay,
-    TypeQualifiers, TypeVarBoundOrConstraints, TypeVarInstance, TypeVarKind, UnionBuilder,
-    UnionType,
+    TypeDefinition, TypeQualifiers, TypeVarBoundOrConstraints, TypeVarInstance, TypeVarKind,
+    UnionBuilder, UnionType,
 };
 use crate::unpack::{Unpack, UnpackPosition};
 use crate::util::subscript::{PyIndex, PySlice};
@@ -7103,6 +7103,29 @@ impl<'db> TypeInferenceBuilder<'db> {
                         }
                         Type::KnownInstance(KnownInstanceType::Final) => {
                             TypeAndQualifiers::new(Type::unknown(), TypeQualifiers::FINAL)
+                        }
+                        Type::KnownInstance(KnownInstanceType::TypingSelf) => {
+                            let scope = self.scope();
+                            let Some(class_node) = self.enclosing_class_symbol(scope) else {
+                                return TypeAndQualifiers::unknown();
+                            };
+                            let Type::ClassLiteral(class) = class_node else {
+                                return TypeAndQualifiers::unknown();
+                            };
+                            let TypeDefinition::Class(d) =
+                                class_node.definition(self.db()).unwrap()
+                            else {
+                                return TypeAndQualifiers::unknown();
+                            };
+                            let ty = Type::TypeVar(TypeVarInstance::new(
+                                self.db(),
+                                class.name(self.db()),
+                                d,
+                                Some(TypeVarBoundOrConstraints::UpperBound(name_expr_ty)),
+                                None,
+                                TypeVarKind::Legacy,
+                            ));
+                            TypeAndQualifiers::new(ty, TypeQualifiers::empty())
                         }
                         _ => name_expr_ty
                             .in_type_expression(self.db())
