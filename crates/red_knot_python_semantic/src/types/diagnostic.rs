@@ -1500,3 +1500,10 @@ pub(crate) fn report_attempted_protocol_instantiation(
     );
     diagnostic.sub(class_def_diagnostic);
 }
+
+pub(crate) fn report_invalid_self_usage(context: &InferContext, node: &ast::Expr) {
+    let Some(builder) = context.report_lint(&INVALID_TYPE_FORM, node) else {
+        return;
+    };
+    builder.into_diagnostic("Self type is only allowed in annotations within class definition");
+}

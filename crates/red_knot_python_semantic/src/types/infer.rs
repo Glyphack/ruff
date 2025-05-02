@@ -98,8 +98,9 @@ use super::context::{InNoTypeCheck, InferContext};
 use super::diagnostic::{
     report_attempted_protocol_instantiation, report_bad_argument_to_get_protocol_members,
     report_index_out_of_bounds, report_invalid_exception_caught, report_invalid_exception_cause,
-    report_invalid_exception_raised, report_invalid_type_checking_constant,
-    report_non_subscriptable, report_possibly_unresolved_reference,
+    report_invalid_exception_raised, report_invalid_self_usage,
+    report_invalid_type_checking_constant, report_non_subscriptable,
+    report_possibly_unresolved_reference,
     report_runtime_check_against_non_runtime_checkable_protocol, report_slice_step_size_zero,
     report_unresolved_reference, INVALID_METACLASS, INVALID_OVERLOAD, INVALID_PROTOCOL,
     REDUNDANT_CAST, STATIC_ASSERT_ERROR, SUBCLASS_OF_FINAL_CLASS, TYPE_ASSERTION_FAILURE,
@@ -7106,26 +7107,27 @@ impl<'db> TypeInferenceBuilder<'db> {
                         }
                         Type::KnownInstance(KnownInstanceType::TypingSelf) => {
                             let scope = self.scope();
-                            let Some(class_node) = self.enclosing_class_symbol(scope) else {
-                                return TypeAndQualifiers::unknown();
-                            };
-                            let Type::ClassLiteral(class) = class_node else {
-                                return TypeAndQualifiers::unknown();
-                            };
-                            let TypeDefinition::Class(d) =
-                                class_node.definition(self.db()).unwrap()
-                            else {
-                                return TypeAndQualifiers::unknown();
-                            };
-                            let ty = Type::TypeVar(TypeVarInstance::new(
-                                self.db(),
-                                class.name(self.db()),
-                                d,
-                                Some(TypeVarBoundOrConstraints::UpperBound(name_expr_ty)),
-                                None,
-                                TypeVarKind::Legacy,
-                            ));
-                            TypeAndQualifiers::new(ty, TypeQualifiers::empty())
+                            if let Some(class_node) = self.enclosing_class_symbol(scope) {
+                                let class = class_node.expect_class_literal();
+                                if let TypeDefinition::Class(d) =
+                                    class_node.definition(self.db()).unwrap()
+                                {
+                                    let ty = Type::TypeVar(TypeVarInstance::new(
+                                        self.db(),
+                                        class.name(self.db()),
+                                        d,
+                                        Some(TypeVarBoundOrConstraints::UpperBound(name_expr_ty)),
+                                        None,
+                                        TypeVarKind::Legacy,
+                                    ));
+                                    TypeAndQualifiers::new(ty, TypeQualifiers::empty())
+                                } else {
+                                    TypeAndQualifiers::unknown()
+                                }
+                            } else {
+                                report_invalid_self_usage(&self.context, annotation);
+                                TypeAndQualifiers::unknown()
+                            }
                         }
                         _ => name_expr_ty
                             .in_type_expression(self.db())
