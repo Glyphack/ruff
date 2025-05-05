@@ -87,8 +87,8 @@ use crate::types::{
     MemberLookupPolicy, MetaclassCandidate, Parameter, ParameterForm, Parameters, Signature,
     Signatures, SliceLiteralType, StringLiteralType, SubclassOfType, Symbol, SymbolAndQualifiers,
     Truthiness, TupleType, Type, TypeAliasType, TypeAndQualifiers, TypeArrayDisplay,
-    TypeDefinition, TypeQualifiers, TypeVarBoundOrConstraints, TypeVarInstance, TypeVarKind,
-    UnionBuilder, UnionType,
+    TypeQualifiers, TypeVarBoundOrConstraints, TypeVarInstance, TypeVarKind, UnionBuilder,
+    UnionType,
 };
 use crate::unpack::{Unpack, UnpackPosition};
 use crate::util::subscript::{PyIndex, PySlice};
@@ -98,9 +98,8 @@ use super::context::{InNoTypeCheck, InferContext};
 use super::diagnostic::{
     report_attempted_protocol_instantiation, report_bad_argument_to_get_protocol_members,
     report_index_out_of_bounds, report_invalid_exception_caught, report_invalid_exception_cause,
-    report_invalid_exception_raised, report_invalid_self_usage,
-    report_invalid_type_checking_constant, report_non_subscriptable,
-    report_possibly_unresolved_reference,
+    report_invalid_exception_raised, report_invalid_type_checking_constant,
+    report_non_subscriptable, report_possibly_unresolved_reference,
     report_runtime_check_against_non_runtime_checkable_protocol, report_slice_step_size_zero,
     report_unresolved_reference, INVALID_METACLASS, INVALID_OVERLOAD, INVALID_PROTOCOL,
     REDUNDANT_CAST, STATIC_ASSERT_ERROR, SUBCLASS_OF_FINAL_CLASS, TYPE_ASSERTION_FAILURE,
@@ -110,7 +109,7 @@ use super::string_annotation::{
     parse_string_annotation, BYTE_STRING_TYPE_ANNOTATION, FSTRING_TYPE_ANNOTATION,
 };
 use super::subclass_of::SubclassOfInner;
-use super::{BoundSuperError, BoundSuperType, ClassBase};
+use super::{BoundSuperError, BoundSuperType, ClassBase, TypeExpressionContext};
 
 /// Infer all types for a [`ScopeId`], including all definitions and expressions in that scope.
 /// Use when checking a scope, or needing to provide a type for an arbitrary expression in the
@@ -610,6 +609,13 @@ impl<'db> TypeInferenceBuilder<'db> {
 
     fn scope(&self) -> ScopeId<'db> {
         self.types.scope
+    }
+
+    fn type_expression_context(&self) -> TypeExpressionContext<'db> {
+        TypeExpressionContext {
+            scope_id: self.scope(),
+            index: self.index,
+        }
     }
 
     /// Are we currently inferring types in file with deferred types?
@@ -4527,27 +4533,6 @@ impl<'db> TypeInferenceBuilder<'db> {
         Some(infer_definition_types(self.db(), definition).binding_type(definition))
     }
 
-    /// Returns the type of the nearest enclosing class for the given scope.
-    ///
-    /// This function walks up the ancestor scopes starting from the given scope,
-    /// and finds the closest class definition.
-    ///
-    /// Returns `None` if no enclosing class is found.a
-    fn enclosing_class_symbol(&self, scope: ScopeId) -> Option<Type<'db>> {
-        self.index
-            .ancestor_scopes(scope.file_scope_id(self.db()))
-            .find_map(|(_, ancestor_scope)| {
-                if let NodeWithScopeKind::Class(class) = ancestor_scope.node() {
-                    let definition = self.index.expect_single_definition(class.node());
-                    let result = infer_definition_types(self.db(), definition);
-
-                    Some(result.declaration_type(definition).inner_type())
-                } else {
-                    None
-                }
-            })
-    }
-
     fn infer_call_expression(
         &mut self,
         call_expression_node: &ast::Expr,
@@ -4853,8 +4838,9 @@ impl<'db> TypeInferenceBuilder<'db> {
                                             [] => {
                                                 let scope = self.scope();
 
-                                                let Some(enclosing_class) =
-                                                    self.enclosing_class_symbol(scope)
+                                                let Some(enclosing_class) = self
+                                                    .index
+                                                    .enclosing_class_symbol(self.db(), scope)
                                                 else {
                                                     overload.set_return_type(Type::unknown());
                                                     BoundSuperError::UnavailableImplicitArguments
@@ -7105,37 +7091,8 @@ impl<'db> TypeInferenceBuilder<'db> {
                         Type::KnownInstance(KnownInstanceType::Final) => {
                             TypeAndQualifiers::new(Type::unknown(), TypeQualifiers::FINAL)
                         }
-                        Type::KnownInstance(KnownInstanceType::TypingSelf) => {
-                            let scope = self.scope();
-                            if let Some(class_ty) = self.enclosing_class_symbol(scope) {
-                                let class = class_ty.expect_class_literal();
-                                if let TypeDefinition::Class(d) =
-                                    class_ty.definition(self.db()).unwrap()
-                                {
-                                    let ty = Type::TypeVar(TypeVarInstance::new(
-                                        self.db(),
-                                        class.name(self.db()),
-                                        d,
-                                        Some(TypeVarBoundOrConstraints::UpperBound(
-                                            Type::instance(
-                                                self.db(),
-                                                class_ty.expect_class_type(self.db()),
-                                            ),
-                                        )),
-                                        None,
-                                        TypeVarKind::Legacy,
-                                    ));
-                                    TypeAndQualifiers::new(ty, TypeQualifiers::empty())
-                                } else {
-                                    TypeAndQualifiers::unknown()
-                                }
-                            } else {
-                                report_invalid_self_usage(&self.context, annotation);
-                                TypeAndQualifiers::unknown()
-                            }
-                        }
                         _ => name_expr_ty
-                            .in_type_expression(self.db())
+                            .in_type_expression(self.db(), self.type_expression_context())
                             .unwrap_or_else(|error| {
                                 error.into_fallback_type(
                                     &self.context,
@@ -7307,7 +7264,7 @@ impl<'db> TypeInferenceBuilder<'db> {
             ast::Expr::Name(name) => match name.ctx {
                 ast::ExprContext::Load => self
                     .infer_name_expression(name)
-                    .in_type_expression(self.db())
+                    .in_type_expression(self.db(), self.type_expression_context())
                     .unwrap_or_else(|error| {
                         error.into_fallback_type(
                             &self.context,
@@ -7324,7 +7281,7 @@ impl<'db> TypeInferenceBuilder<'db> {
             ast::Expr::Attribute(attribute_expression) => match attribute_expression.ctx {
                 ast::ExprContext::Load => self
                     .infer_attribute_expression(attribute_expression)
-                    .in_type_expression(self.db())
+                    .in_type_expression(self.db(), self.type_expression_context())
                     .unwrap_or_else(|error| {
                         error.into_fallback_type(
                             &self.context,
@@ -7826,7 +7783,7 @@ impl<'db> TypeInferenceBuilder<'db> {
                             generic_context,
                         );
                         specialized_class
-                            .in_type_expression(self.db())
+                            .in_type_expression(self.db(), self.type_expression_context())
                             .unwrap_or(Type::unknown())
                     }
                     None => {
