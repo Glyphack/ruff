@@ -24,9 +24,10 @@ impl SyncNotificationHandler for DidCloseNotebookHandler {
             ..
         } = params;
 
-        let document = session
-            .document_handle(&uri)
-            .with_failure_code(lsp_server::ErrorCode::InternalError)?;
+        let Ok(document) = session.document_handle(&uri) else {
+            tracing::warn!("Ignoring `notebookDocument/didClose` for unknown document {uri}");
+            return Ok(());
+        };
 
         // We don't need to call publish any diagnostics because we clear
         // the diagnostics when closing the corresponding cell documents.

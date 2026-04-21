@@ -31,6 +31,7 @@ mod code_actions;
 mod commands;
 mod completions;
 mod configuration;
+mod did_close;
 mod folding_range;
 mod initialize;
 mod inlay_hints;

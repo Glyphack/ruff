@@ -24,9 +24,10 @@ impl SyncNotificationHandler for DidCloseTextDocumentHandler {
             text_document: TextDocumentIdentifier { uri },
         } = params;
 
-        let document = session
-            .document_handle(&uri)
-            .with_failure_code(ErrorCode::InternalError)?;
+        let Ok(document) = session.document_handle(&uri) else {
+            tracing::warn!("Ignoring `textDocument/didClose` for unknown document {uri}");
+            return Ok(());
+        };
 
         let should_clear_diagnostics = document
             .close(session)
